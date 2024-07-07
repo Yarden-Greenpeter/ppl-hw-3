@@ -44,17 +44,18 @@ import { format } from "../shared/format";
 
 export type TExp =  AtomicTExp | CompoundTExp | TVar;
 export const isTExp = (x: any): x is TExp => isAtomicTExp(x) || isCompoundTExp(x) || isTVar(x);
-
-export type AtomicTExp = NumTExp | BoolTExp | StrTExp | VoidTExp;
+// 3.1 added Any, Never 
+export type AtomicTExp = NumTExp | BoolTExp | StrTExp | VoidTExp | AnyTExp | NeverTExp;    
 export const isAtomicTExp = (x: any): x is AtomicTExp =>
-    isNumTExp(x) || isBoolTExp(x) || isStrTExp(x) || isVoidTExp(x);
-
-export type CompoundTExp = ProcTExp | TupleTExp | UnionTExp;
-export const isCompoundTExp = (x: any): x is CompoundTExp => isProcTExp(x) || isTupleTExp(x) || isUnionTExp(x);
-
-export type NonTupleTExp = AtomicTExp | ProcTExp | TVar | UnionTExp;
+    isNumTExp(x) || isBoolTExp(x) || isStrTExp(x) || isVoidTExp(x) || isAnyTExp(x) || isNeverTExp(x);
+// 3.2-3 added typePred, Inter, Diff 
+export type CompoundTExp = ProcTExp | typePredTExp | TupleTExp | UnionTExp | InterTExp | DiffTExp;
+export const isCompoundTExp = (x: any): x is CompoundTExp => 
+    isProcTExp(x) || istypePredTExp(x) || isTupleTExp(x) || isUnionTExp(x) || isInterTExp(x) || isDiffTExp(x);
+// 3.2-3 added typePred, Inter, Diff
+export type NonTupleTExp = AtomicTExp | ProcTExp | typePredTExp | TVar | UnionTExp | InterTExp | DiffTExp ;
 export const isNonTupleTExp = (x: any): x is NonTupleTExp =>
-    isAtomicTExp(x) || isProcTExp(x) || isTVar(x) || isUnionTExp(x);
+    isAtomicTExp(x) || isProcTExp(x) || istypePredTExp(x) || isTVar(x) || isUnionTExp(x) || isInterTExp(x) || isDiffTExp(x);
 
 export type NumTExp = { tag: "NumTExp" };
 export const makeNumTExp = (): NumTExp => ({tag: "NumTExp"});
@@ -72,14 +73,64 @@ export type VoidTExp = { tag: "VoidTExp" };
 export const makeVoidTExp = (): VoidTExp => ({tag: "VoidTExp"});
 export const isVoidTExp = (x: any): x is VoidTExp => x.tag === "VoidTExp";
 
+//3.1 add here the types any and never:
+//----------------------------------------------------------------------------
+export type AnyTExp = { tag: "AnyTExp" };
+export const makeAnyTExp = (): AnyTExp => ({tag: "AnyTExp"});
+export const isAnyTExp = (x: any): x is AnyTExp => x.tag === "AnyTExp";
+
+export type NeverTExp = { tag: "NeverTExp" };
+export const makeNeverTExp = (): NeverTExp => ({tag: "NeverTExp"});
+export const isNeverTExp = (x: any): x is NeverTExp => x.tag === "neverTExp";
+//----------------------------------------------------------------------------
+
 // proc-te(param-tes: list(te), return-te: te)
 export type ProcTExp = { tag: "ProcTExp"; paramTEs: TExp[]; returnTE: TExp; };
-export const makeProcTExp = (paramTEs: TExp[], returnTE: TExp): ProcTExp =>
+export const makeProcTExp = (paramTEs: TExp[], returnTE: TExp | typePredTExp): ProcTExp =>
     ({tag: "ProcTExp", paramTEs: paramTEs, returnTE: returnTE});
 export const isProcTExp = (x: any): x is ProcTExp => x.tag === "ProcTExp";
 // Uniform access to all components of a ProcTExp
 export const procTExpComponents = (pt: ProcTExp): TExp[] =>
     [...pt.paramTEs, pt.returnTE];
+
+//added typePredTExp, interTExp, diffTExp
+//----------------------------------------------------------------------------
+export type typePredTExp = { tag: "typePredTExp"; arg: TExp; pred: TExp; ret: TExp; };
+export const makeTypePredTExp = (arg: TExp, pred: TExp, ret: TExp): typePredTExp => 
+    ({tag: "typePredTExp", arg: arg, pred: pred, ret: ret});
+export const istypePredTExp = (x: any): x is typePredTExp => x.tag === "typePredTExp";
+
+export type InterTExp = { tag: "InterTExp"; components: TExp[] };
+export const makeInterTExp = ( tes: TExp[] ): TExp => {
+    if ( tes.length == 2 && (tes[0].tag == "NeverTExp" || tes[1].tag == "NeverTExp")) {
+      return makeNeverTExp();
+    }
+    if (tes.length == 2 && tes[0].tag == "AnyTExp" && tes[1].tag == "AnyTExp") {
+        return makeAnyTExp();
+    }
+    if (tes.length == 2 && tes[0].tag == "AnyTExp") {
+      return tes[1];
+    }
+    return normalizeInter({tag: "InterTExp", components: flattenSortInter(tes)});
+  };
+  
+export const isInterTExp = (x: any): x is InterTExp => x.tag === "InterTExp";
+
+
+export type DiffTExp = { tag: "DiffTExp"; components: TExp[] };
+export const makeDiffTExp = (tes1: TExp, tes2: TExp): TExp => {
+    const te2 = makeInterTExp([tes1, tes2]);
+    if (!isSubType(tes1, tes2) && !isSubType(tes2, tes1)) return tes1;
+    if (tes2.tag == "AnyTExp") {
+      return makeNeverTExp();
+    }
+    if (tes1.tag == "NeverTExp" || te2.tag == "NeverTExp") {
+      return tes1;
+    }
+    return normalizeDiff({tag: "DiffTExp", components: flattenSortDiff([tes1, te2])});
+  };
+export const isDiffTExp = (x: any): x is DiffTExp => x.tag === "DiffTExp";
+//----------------------------------------------------------------------------
 
 export type TupleTExp = NonEmptyTupleTExp | EmptyTupleTExp;
 export const isTupleTExp = (x: any): x is TupleTExp =>
@@ -125,6 +176,39 @@ const flattenUnion = (tes: TExp[]): TExp[] =>
         [tes[0], ...flattenUnion(tes.slice(1))] :
     [];
 
+//3.2 added to support Inter, Diff:
+//----------------------------------------------------------------------
+const normalizeInter = (ite: InterTExp): TExp =>
+    isEmpty(ite.components) ? makeNeverTExp() : 
+    includes(makeAnyTExp(), ite.components) ? makeAnyTExp() :
+    (ite.components.length === 1) ? ite.components[0] :
+    dnf(ite);
+
+const flattenInter = (tes: TExp[]): TExp[] =>
+    (tes.length > 0) ? 
+        isInterTExp(tes[0]) ? [...tes[0].components, ...flattenInter(tes.slice(1))] :
+        [tes[0], ...flattenInter(tes.slice(1))] :
+    []; // 3.2
+
+const flattenSortInter = (tes: TExp[]): TExp[] =>
+    removeDuplicatesAndAny(sort(subTypeComparator, flattenInter(tes)));
+
+export const normalizeDiff = (dte: DiffTExp): TExp =>
+    dte.components.length === 0 ? { tag: "NeverTExp" } : // Assuming NeverTExp represents an empty type
+    dte.components.length === 1 ? dte.components[0] :
+    dte;
+
+const flattenDiff = (tes: TExp[]): TExp[] =>
+(tes.length > 0) ?
+    isDiffTExp(tes[0]) || isInterTExp(tes[0]) || isUnionTExp(tes[0]) ? 
+        [...tes[0].components, ...flattenDiff(tes.slice(1))] :
+    [tes[0], ...flattenDiff(tes.slice(1))] :
+[];
+
+const flattenSortDiff = (tes: TExp[]): TExp[] =>
+    filterUniqueTExps(sort(subTypeComparator, flattenDiff(tes)));
+//----------------------------------------------------------------------
+
 // Comparator for sort function - return -1 if te1 < te2, 0 if equal, +1 if te1 > te2
 // If types not comparable by subType - order by lexicographic of unparsed form.
 const subTypeComparator = (te1: TExp, te2: TExp): number =>
@@ -154,6 +238,33 @@ const removeDuplicatesAndNever = (tes: TExp[]): TExp[] =>
     containsType(tes.slice(1), tes[0]) ? removeDuplicatesAndNever(tes.slice(1)) :
     isNeverTExp(tes[0]) ? removeDuplicatesAndNever(tes.slice(1)) :
     [tes[0], ...removeDuplicatesAndNever(tes.slice(1))];
+
+// Remove `AnyTExp` and handle duplicates
+const removeDuplicatesAndAny = (tes: TExp[]): TExp[] => {
+    if (isEmpty(tes)) return tes;
+    const uniqueTes = tes.filter((te, index) => !isAnyTExp(te) && 
+        !tes.slice(0, index).some((existingTe) => isSubType(existingTe, te)));
+    return uniqueTes;
+    };
+
+const filterUniqueTExps = (tes: TExp[]): TExp[] => {
+    const hasAnyTExp = tes.some((te) => te.tag === "AnyTExp");
+    if (hasAnyTExp) {
+        return [{ tag: "AnyTExp" }];
+    }
+    // Step 1: Count occurrences of each TExp
+    const countMap = new Map<string, number>();
+    for (const te of tes) {
+        const key = JSON.stringify(te); // Convert object to string for using as a map key
+        countMap.set(key, (countMap.get(key) || 0) + 1);
+    }
+    
+    // Step 2: Filter TExp elements appearing only once
+    return tes.filter((te) => {
+        const key = JSON.stringify(te); // Convert object to string for using as a map key
+        return countMap.get(key) === 1;
+    });
+    };
 // L52 END
 
 
@@ -213,6 +324,10 @@ export const crossProduct = (ll1: TExp[][], ll2: TExp[][]): TExp[][] =>
 export const isSubType = (te1: TExp, te2: TExp): boolean =>
     (isUnionTExp(te1) && isUnionTExp(te2)) ? isSubset(te1.components, te2.components) :
     isUnionTExp(te2) ? containsType(te2.components, te1) :
+    (isInterTExp(te1) && isInterTExp(te2)) ? isSubset(te1.components, te2.components) :
+    isInterTExp(te2) ? containsType(te2.components, te1) :
+    isDiffTExp(te1) && isDiffTExp(te2) ? isSubset(te1.components, te2.components) :
+    isDiffTExp(te2) ? containsType(te2.components, te1) :
     (isProcTExp(te1) && isProcTExp(te2)) ? checkProcTExps(te1, te2) :
     isTVar(te1) ? equals(te1, te2) :
     isAtomicTExp(te1) ? equals(te1, te2) :
@@ -303,18 +418,34 @@ export const parseTExp = (texp: Sexp): Result<TExp> =>
     (texp === "boolean") ? makeOk(makeBoolTExp()) :
     (texp === "void") ? makeOk(makeVoidTExp()) :
     (texp === "string") ? makeOk(makeStrTExp()) :
+    (texp == "any") ? makeOk(makeAnyTExp()) :  //added here to support the any expression 
+    (texp == "never") ? makeOk(makeNeverTExp()) : //added here to support the never expression
     isString(texp) ? makeOk(makeTVar(texp)) :
     isArray(texp) ? parseCompoundTExp(texp) :
     makeFailure(`Unexpected TExp - ${format(texp)}`);
 
 const parseCompoundTExp = (texps: Sexp[]): Result<TExp> =>
     (texps[0] === "union") ? parseUnionTExp(texps) :
+    (texps[0] == "inter") ? parseInterTExp(texps) :
+    (texps[0] == "diff") ? parseDiffTExp(texps) : // 3.2
     parseProcTExp(texps);
 
 // Expect (union texp1 ...)
 const parseUnionTExp = (texps: Sexp[]): Result<TExp> =>
     mapv(mapResult(parseTExp, texps.slice(1)),
          (tes: TExp[]) => makeUnionTExp(tes));
+
+const parseInterTExp = (texps: Sexp[]): Result<TExp> => // 3.2
+mapv(
+    mapResult(parseTExp, texps.slice(1)),(tes: TExp[]) => 
+        makeInterTExp(tes)
+);
+
+const parseDiffTExp = (texps: Sexp[]): Result<TExp> => {
+if (texps.length !== 3) return makeFailure("DiffTExp requires exactly 2 arguments");
+return bind(parseTExp(texps[1]), (tes1: TExp) =>
+    bind(parseTExp(texps[2]), (tes2: TExp) => makeOk(makeDiffTExp(tes1, tes2))));
+};
 
 /*
 ;; expected structure: (<params> -> <returnte>)
@@ -363,19 +494,35 @@ export const unparseTExp = (te: TExp): Result<string> => {
     const parenthesizeUnion = (tes: string[]): string =>
         (tes.length == 1) ? tes[0] :  // (union T) -> T
         `(union ${tes[0]} ${parenthesizeUnion(tes.slice(1))})`
+    
+    const parenthesizeInter = (tes: string[]): string =>
+        (tes.length == 1) ? tes[0] : // (inter T) -> T
+        `(inter ${tes[0]} ${parenthesizeInter(tes.slice(1))})`;
+    
+    const parenthesizeDiff = (tes: string[]): string =>
+        (tes.length == 1) ? tes[0] : // (diff T) -> T
+        `(diff ${tes[0]} ${parenthesizeDiff(tes.slice(1))})`;
+    
 
     const up = (x?: TExp): Result<string | string[]> =>
         isNumTExp(x) ? makeOk('number') :
         isBoolTExp(x) ? makeOk('boolean') :
         isStrTExp(x) ? makeOk('string') :
         isVoidTExp(x) ? makeOk('void') :
+        isAnyTExp(x) ? makeOk('any') :
+        isNeverTExp(x) ? makeOk('never') :
         isEmptyTVar(x) ? makeOk(x.var) :
         isTVar(x) ? up(tvarContents(x)) :
         isUnionTExp(x) ? mapv(mapResult(unparseTExp, x.components), (componentTEs: string[]) => 
                                 parenthesizeUnion(componentTEs)) :
+        isInterTExp(x) ? mapv(mapResult(unparseTExp, x.components),(componentTEs: string[]) => 
+                                parenthesizeInter(componentTEs)) :
+        isDiffTExp(x) ? mapv(mapResult(unparseTExp, x.components),(componentTEs: string[]) => 
+                                parenthesizeDiff(componentTEs)) :
         isProcTExp(x) ? bind(unparseTuple(x.paramTEs), (paramTEs: string[]) =>
                             mapv(unparseTExp(x.returnTE), (returnTE: string) =>
                                 [...paramTEs, '->', returnTE])) :
+        istypePredTExp(x) ? makeFailure("") :
         isEmptyTupleTExp(x) ? makeOk("Empty") :
         isNonEmptyTupleTExp(x) ? unparseTuple(x.TEs) :
         x === undefined ? makeFailure("Undefined TVar") :
