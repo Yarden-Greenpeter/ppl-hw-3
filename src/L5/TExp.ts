@@ -81,7 +81,7 @@ export const isAnyTExp = (x: any): x is AnyTExp => x.tag === "AnyTExp";
 
 export type NeverTExp = { tag: "NeverTExp" };
 export const makeNeverTExp = (): NeverTExp => ({tag: "NeverTExp"});
-export const isNeverTExp = (x: any): x is NeverTExp => x.tag === "neverTExp";
+export const isNeverTExp = (x: any): x is NeverTExp => x.tag === "NeverTExp";
 //----------------------------------------------------------------------------
 
 // proc-te(param-tes: list(te), return-te: te)
@@ -321,18 +321,21 @@ export const crossProduct = (ll1: TExp[][], ll2: TExp[][]): TExp[][] =>
             ll1).flat();
 
 // SubType comparator
-export const isSubType = (te1: TExp, te2: TExp): boolean =>
-    (isUnionTExp(te1) && isUnionTExp(te2)) ? isSubset(te1.components, te2.components) :
+export const isSubType = (te1: TExp, te2: TExp): boolean => {
+    //console.log(`te1.tag: ${te1.tag}, te2.tag: ${te2.tag}`);
+    return (isUnionTExp(te1) && isUnionTExp(te2)) ? isSubset(te1.components, te2.components) :
     isUnionTExp(te2) ? containsType(te2.components, te1) :
-    (isInterTExp(te1) && isInterTExp(te2)) ? isSubset(te1.components, te2.components) :
+    isInterTExp(te1) && isInterTExp(te2) ? isSubset(te1.components, te2.components) :
     isInterTExp(te2) ? containsType(te2.components, te1) :
     isDiffTExp(te1) && isDiffTExp(te2) ? isSubset(te1.components, te2.components) :
     isDiffTExp(te2) ? containsType(te2.components, te1) :
+    istypePredTExp(te1) && istypePredTExp(te2) ? checkTypePredTExp(te1, te2) :
     (isProcTExp(te1) && isProcTExp(te2)) ? checkProcTExps(te1, te2) :
     isTVar(te1) ? equals(te1, te2) :
+    isTExp(te1) && isTExp(te2) ? te2.tag == "AnyTExp" || te1.tag == te2.tag :
     isAtomicTExp(te1) ? equals(te1, te2) :
     false;
-
+}
 // True when te is in tes or is a subtype of one of the elements of tes
 export const containsType = (tes: TExp[], te: TExp): boolean =>
     isEmpty(tes) ? false :
@@ -355,6 +358,11 @@ export const checkProcTExps = (te1: ProcTExp, te2: ProcTExp): boolean =>
     isSubType(te1.returnTE, te2.returnTE) &&
     all((pair: [TExp, TExp]) => isSubType(pair[0], pair[1]), zip(te2.paramTEs,te1.paramTEs));
 
+//added to support typePred
+const checkTypePredTExp = (te1: typePredTExp, te2: typePredTExp): boolean =>
+    isSubType(te1.arg, te2.arg) &&
+    isSubType(te1.pred, te2.pred) &&
+    isSubType(te1.ret, te2.ret);
 
 // TVar: Type Variable with support for dereferencing (TVar -> TVar)
 export type TVar = { tag: "TVar"; var: string; contents: Box<undefined | TExp>; };
@@ -417,9 +425,13 @@ export const parseTExp = (texp: Sexp): Result<TExp> =>
     (texp === "number") ? makeOk(makeNumTExp()) :
     (texp === "boolean") ? makeOk(makeBoolTExp()) :
     (texp === "void") ? makeOk(makeVoidTExp()) :
+    (texp === "any") ? makeOk(makeAnyTExp()) :  
+    (texp === "never") ? makeOk(makeNeverTExp()) :
+    texp[0] === "is" && texp.length === 4 ? bind(parseTExp(texp[1]), (arg: TExp) =>
+                                                bind(parseTExp(texp[2]), (pred: TExp) =>
+                                                    bind(parseTExp(texp[3]), (ret: TExp) =>
+                                                        makeOk(makeTypePredTExp(arg, pred, ret))))) : 
     (texp === "string") ? makeOk(makeStrTExp()) :
-    (texp == "any") ? makeOk(makeAnyTExp()) :  //added here to support the any expression 
-    (texp == "never") ? makeOk(makeNeverTExp()) : //added here to support the never expression
     isString(texp) ? makeOk(makeTVar(texp)) :
     isArray(texp) ? parseCompoundTExp(texp) :
     makeFailure(`Unexpected TExp - ${format(texp)}`);
@@ -427,7 +439,7 @@ export const parseTExp = (texp: Sexp): Result<TExp> =>
 const parseCompoundTExp = (texps: Sexp[]): Result<TExp> =>
     (texps[0] === "union") ? parseUnionTExp(texps) :
     (texps[0] == "inter") ? parseInterTExp(texps) :
-    (texps[0] == "diff") ? parseDiffTExp(texps) : // 3.2
+    (texps[0] == "diff") ? parseDiffTExp(texps) :
     parseProcTExp(texps);
 
 // Expect (union texp1 ...)
@@ -435,11 +447,9 @@ const parseUnionTExp = (texps: Sexp[]): Result<TExp> =>
     mapv(mapResult(parseTExp, texps.slice(1)),
          (tes: TExp[]) => makeUnionTExp(tes));
 
-const parseInterTExp = (texps: Sexp[]): Result<TExp> => // 3.2
-mapv(
-    mapResult(parseTExp, texps.slice(1)),(tes: TExp[]) => 
-        makeInterTExp(tes)
-);
+const parseInterTExp = (texps: Sexp[]): Result<TExp> =>
+    mapv(mapResult(parseTExp, texps.slice(1)), 
+         (tes: TExp[]) => makeInterTExp(tes));
 
 const parseDiffTExp = (texps: Sexp[]): Result<TExp> => {
 if (texps.length !== 3) return makeFailure("DiffTExp requires exactly 2 arguments");

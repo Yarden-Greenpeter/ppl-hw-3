@@ -6,7 +6,7 @@
 import { join, map, zipWith } from "ramda";
 import { Sexp, Token } from 's-expression';
 import { isCompoundSExp, isEmptySExp, isSymbolSExp, makeCompoundSExp, makeEmptySExp, makeSymbolSExp, SExpValue, valueToString } from './L5-value';
-import { isTVar, makeFreshTVar, parseTExp, unparseTExp, TExp } from './TExp';
+import { isTVar, makeFreshTVar, parseTExp, unparseTExp, TExp, typePredTExp, makeTypePredTExp } from './TExp';
 import { allT, first, rest, second, isEmpty, isNonEmptyList } from '../shared/list';
 import { parse as p, isToken, isSexpString } from "../shared/parser";
 import { Result, bind, makeFailure, mapResult, makeOk, mapv } from "../shared/result";
@@ -127,8 +127,8 @@ export const makeIfExp = (test: CExp, then: CExp, alt: CExp): IfExp =>
     ({tag: "IfExp", test: test, then: then, alt: alt});
 export const isIfExp = (x: any): x is IfExp => x.tag === "IfExp";
 
-export type ProcExp = {tag: "ProcExp"; args: VarDecl[], body: CExp[]; returnTE: TExp }
-export const makeProcExp = (args: VarDecl[], body: CExp[], returnTE: TExp): ProcExp =>
+export type ProcExp = {tag: "ProcExp"; args: VarDecl[], body: CExp[]; returnTE: TExp | typePredTExp}
+export const makeProcExp = (args: VarDecl[], body: CExp[], returnTE: TExp | typePredTExp): ProcExp =>
     ({tag: "ProcExp", args: args, body: body, returnTE: returnTE});
 export const isProcExp = (x: any): x is ProcExp => x.tag === "ProcExp";
 
@@ -263,6 +263,26 @@ const parseProcExp = (vars: Sexp, rest: Sexp[]): Result<ProcExp> => {
         return makeFailure(`Invalid args ${format(vars)}`)
     }
 }
+
+const parseTypePred = (vars: Sexp[], rest: Sexp[]): Result<ProcExp> => {
+    if (vars.length === 2 && rest[0] === "is") {
+      const args = mapResult(parseVarDecl, vars);
+      const body = mapResult(parseL5CExp, rest.slice(1));
+      const predTE = parseTExp(vars[1]);
+      const retTE = parseTExp(vars[2]);
+      return bind(args, (args: VarDecl[]) =>
+        bind(body, (body: CExp[]) =>
+          bind(predTE, (predTE: TExp) =>
+            mapv(retTE, (retTE: TExp) =>
+              makeProcExp(args, body, makeTypePredTExp(predTE, retTE, retTE))
+            )
+          )
+        )
+      );
+    } else {
+      return makeFailure("Wrong syntax for type predicate");
+    }
+  };
 
 const isGoodBindings = (bindings: Sexp): bindings is [Sexp, Sexp][] =>
     isArray(bindings) && allT(isArray, bindings);

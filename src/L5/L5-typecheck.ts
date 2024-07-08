@@ -8,7 +8,7 @@ import { isAppExp, isBoolExp, isDefineExp, isIfExp, isLetrecExp, isLetExp, isNum
 import { applyTEnv, makeEmptyTEnv, makeExtendTEnv, TEnv } from "./TEnv";
 import { isProcTExp, makeBoolTExp, makeNumTExp, makeProcTExp, makeStrTExp, makeVoidTExp,
          parseTE, unparseTExp, makeUnionTExp,
-         BoolTExp, NumTExp, StrTExp, TExp, VoidTExp, isSubType } from "./TExp";
+         BoolTExp, NumTExp, StrTExp, TExp, VoidTExp, isSubType,makeDiffTExp, istypePredTExp } from "./TExp";
 import { isEmpty, allT, first, rest, NonEmptyList, List, isNonEmptyList } from '../shared/list';
 import { Result, makeFailure, bind, makeOk, zipWithResult, either } from '../shared/result';
 import { parse as p } from "../shared/parser";
@@ -141,14 +141,38 @@ export const typeofIfNormal = (ifExp: IfExp, tenv: TEnv): Result<TExp> => {
 };
 
 // L52 Structured methods
-const isTypePredApp = (e: Exp, tenv: TEnv): Result<{/* Add parameters */}> => {
-}
+export const isTypePredApp = (e: Exp,tenv: TEnv): Result<{ rator: TExp; arg: TExp }> => {
+    if (isAppExp(e)) {
+        const appExp = e as AppExp;
+        return bind(typeofExp(appExp.rator, tenv), (ratorTE: TExp) => {
+        if (istypePredTExp(ratorTE)) {
+            return bind(typeofExp(appExp.rands[0], tenv), (argTE: TExp) => {
+            if (argTE.tag === ratorTE.arg.tag) {
+                return makeOk({ rator: ratorTE, arg: argTE });
+            } else { return makeFailure(`Type mismatch in type predicate application`);}
+            });
+        } else {
+            return makeFailure(`Non-type predicate application`);
+        }
+        });
+    } else {
+        return makeFailure(`Not an application expression`);
+    }
+};
 
 export const typeofIf = (ifExp: IfExp, tenv: TEnv): Result<TExp> =>
     either(
-        bind (isTypePredApp(ifExp.test, tenv), ({/* Add parameter here */}) => {}),
-        makeOk,
-        () => typeofIfNormal(ifExp, tenv));
+      bind(isTypePredApp(ifExp.test, tenv), ({ rator, arg }) => {
+        return bind(typeofExp(ifExp.then, tenv), (thenTE: TExp) =>
+          bind(typeofExp(ifExp.alt, tenv), (altTE: TExp): Result<TExp> => {
+            if (checkCompatibleType(thenTE, altTE, ifExp)) { return makeOk(thenTE);}
+            else {return makeOk(makeDiffTExp(altTE, thenTE));}
+          })
+        );
+      }),
+      makeOk,
+      () => typeofIfNormal(ifExp, tenv)
+    );
 
 
 // Purpose: compute the type of a proc-exp
@@ -162,6 +186,8 @@ export const typeofProc = (proc: ProcExp, tenv: TEnv): Result<TExp> => {
                             checkCompatibleType(body, proc.returnTE, proc));
     return bind(constraint1, _ => makeOk(makeProcTExp(argsTEs, proc.returnTE)));
 };
+//added to support 3.4
+
 
 // Purpose: compute the type of an app-exp
 // Typing rule:
