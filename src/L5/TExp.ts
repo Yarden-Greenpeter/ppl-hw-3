@@ -130,7 +130,7 @@ export const makeDiffTExp = (tes1: TExp, tes2: TExp): TExp => {
     if (tes2.tag == "AnyTExp") {
       return makeNeverTExp();
     }
-    if (tes1.tag == "NeverTExp" || te2.tag == "NeverTExp") {
+    if (te2.tag == "NeverTExp") {
       return tes1;
     }
     return normalizeDiff({tag: "DiffTExp", components: flattenSortDiff([tes1, te2])});
@@ -194,7 +194,7 @@ const flattenInter = (tes: TExp[]): TExp[] =>
     (tes.length > 0) ? 
         isInterTExp(tes[0]) ? [...tes[0].components, ...flattenInter(tes.slice(1))] :
         [tes[0], ...flattenInter(tes.slice(1))] :
-    []; // 3.2
+    [];
 
 const flattenSortInter = (tes: TExp[]): TExp[] =>
     removeDuplicatesAndAny(sort(subTypeComparator, flattenInter(tes)));
@@ -364,9 +364,7 @@ export const checkProcTExps = (te1: ProcTExp, te2: ProcTExp): boolean =>
 
 //added to support typePred
 const checkTypePredTExp = (te1: typePredTExp, te2: typePredTExp): boolean =>
-    isSubType(te1.arg, te2.arg) &&
-    isSubType(te1.pred, te2.pred) &&
-    isSubType(te1.ret, te2.ret);
+    isSubType(te1.arg, te2.arg) && isSubType(te1.pred, te2.pred) && isSubType(te1.ret, te2.ret);
 
 // TVar: Type Variable with support for dereferencing (TVar -> TVar)
 export type TVar = { tag: "TVar"; var: string; contents: Box<undefined | TExp>; };
