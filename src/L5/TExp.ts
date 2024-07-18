@@ -1,11 +1,13 @@
 /*
 ;; Type language
 ;; <texp>         ::= <atomic-te> | <compound-te> | <tvar>
-;; <atomic-te>    ::= <num-te> | <bool-te> | <void-te>
+;; <atomic-te>    ::= <num-te> | <bool-te> | <void-te> | <any-te> | <never-te>
 ;; <num-te>       ::= number   // num-te()
 ;; <bool-te>      ::= boolean  // bool-te()
 ;; <str-te>       ::= string   // str-te()
 ;; <void-te>      ::= void     // void-te()
+;; <any-te>       ::= any
+:: <never-te>     ::= never
 ;; <compound-te>  ::= <proc-te> | <tuple-te> | <union-te>
 ;; <non-tuple-te> ::= <atomic-te> | <proc-te> | <tvar>
 ;; <proc-te>      ::= [ <tuple-te> -> <non-tuple-te> ] // proc-te(param-tes: list(te), return-te: te)
@@ -48,11 +50,14 @@ export const isTExp = (x: any): x is TExp => isAtomicTExp(x) || isCompoundTExp(x
 export type AtomicTExp = NumTExp | BoolTExp | StrTExp | VoidTExp | AnyTExp | NeverTExp;    
 export const isAtomicTExp = (x: any): x is AtomicTExp =>
     isNumTExp(x) || isBoolTExp(x) || isStrTExp(x) || isVoidTExp(x) || isAnyTExp(x) || isNeverTExp(x);
+
 // 3.2-3 added typePred, Inter, Diff 
 export type CompoundTExp = ProcTExp | typePredTExp | TupleTExp | UnionTExp | InterTExp | DiffTExp;
 export const isCompoundTExp = (x: any): x is CompoundTExp => 
     isProcTExp(x) || istypePredTExp(x) || isTupleTExp(x) || isUnionTExp(x) || isInterTExp(x) || isDiffTExp(x);
 // 3.2-3 added typePred, Inter, Diff
+
+
 export type NonTupleTExp = AtomicTExp | ProcTExp | typePredTExp | TVar | UnionTExp | InterTExp | DiffTExp ;
 export const isNonTupleTExp = (x: any): x is NonTupleTExp =>
     isAtomicTExp(x) || isProcTExp(x) || istypePredTExp(x) || isTVar(x) || isUnionTExp(x) || isInterTExp(x) || isDiffTExp(x);
@@ -93,6 +98,7 @@ export const isProcTExp = (x: any): x is ProcTExp => x.tag === "ProcTExp";
 export const procTExpComponents = (pt: ProcTExp): TExp[] =>
     [...pt.paramTEs, pt.returnTE];
 
+
 //added typePredTExp, interTExp, diffTExp
 //----------------------------------------------------------------------------
 export type typePredTExp = { tag: "typePredTExp"; arg: TExp; pred: TExp; ret: TExp; };
@@ -110,7 +116,7 @@ export const makeInterTExp = ( tes: TExp[] ): TExp => {
     }
     if (tes.length == 2 && tes[0].tag == "AnyTExp") {
       return tes[1];
-    }
+    } //else we need to handle larger components
     return normalizeInter({tag: "InterTExp", components: flattenSortInter(tes)});
   };
   
@@ -194,7 +200,7 @@ const flattenSortInter = (tes: TExp[]): TExp[] =>
     removeDuplicatesAndAny(sort(subTypeComparator, flattenInter(tes)));
 
 export const normalizeDiff = (dte: DiffTExp): TExp =>
-    dte.components.length === 0 ? { tag: "NeverTExp" } : // Assuming NeverTExp represents an empty type
+    dte.components.length === 0 ? makeNeverTExp() :
     dte.components.length === 1 ? dte.components[0] :
     dte;
 
@@ -242,8 +248,8 @@ const removeDuplicatesAndNever = (tes: TExp[]): TExp[] =>
 // Remove `AnyTExp` and handle duplicates
 const removeDuplicatesAndAny = (tes: TExp[]): TExp[] => {
     if (isEmpty(tes)) return tes;
-    const uniqueTes = tes.filter((te, index) => !isAnyTExp(te) && 
-        !tes.slice(0, index).some((existingTe) => isSubType(existingTe, te)));
+    const uniqueTes = tes.filter((iter, index) => !isAnyTExp(iter) && 
+        !tes.slice(0, index).some((te) => isSubType(te, iter)));
     return uniqueTes;
     };
 
@@ -321,9 +327,8 @@ export const crossProduct = (ll1: TExp[][], ll2: TExp[][]): TExp[][] =>
             ll1).flat();
 
 // SubType comparator
-export const isSubType = (te1: TExp, te2: TExp): boolean => {
-    //console.log(`te1.tag: ${te1.tag}, te2.tag: ${te2.tag}`);
-    return (isUnionTExp(te1) && isUnionTExp(te2)) ? isSubset(te1.components, te2.components) :
+export const isSubType = (te1: TExp, te2: TExp): boolean => 
+    isUnionTExp(te1) && isUnionTExp(te2) ? isSubset(te1.components, te2.components) :
     isUnionTExp(te2) ? containsType(te2.components, te1) :
     isInterTExp(te1) && isInterTExp(te2) ? isSubset(te1.components, te2.components) :
     isInterTExp(te2) ? containsType(te2.components, te1) :
@@ -335,7 +340,6 @@ export const isSubType = (te1: TExp, te2: TExp): boolean => {
     isTExp(te1) && isTExp(te2) ? te2.tag == "AnyTExp" || te1.tag == te2.tag :
     isAtomicTExp(te1) ? equals(te1, te2) :
     false;
-}
 // True when te is in tes or is a subtype of one of the elements of tes
 export const containsType = (tes: TExp[], te: TExp): boolean =>
     isEmpty(tes) ? false :
